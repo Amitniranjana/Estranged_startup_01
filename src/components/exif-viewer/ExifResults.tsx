@@ -5,12 +5,11 @@ import {
   Calendar,
   Camera,
   Info,
-  MapPin,
   Maximize2,
   Smartphone,
 } from "lucide-react";
 
-import { LocationMap } from "./LocationMap";
+import { LocationSection } from "./LocationSection";
 
 import type { ParsedExifData } from "@/lib/types";
 
@@ -143,27 +142,10 @@ export function ExifResults({ previewUrl, fileName, data }: ExifResultsProps) {
               <MissingValue label="Dimensions" />
             )}
           </div>
-
-          {hasGps ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <MetadataItem
-                icon={<MapPin className="h-3.5 w-3.5" />}
-                label="Latitude"
-                value={data.latitude!.toFixed(6)}
-              />
-              <MetadataItem
-                icon={<MapPin className="h-3.5 w-3.5" />}
-                label="Longitude"
-                value={data.longitude!.toFixed(6)}
-              />
-            </div>
-          ) : null}
         </div>
       </div>
 
-      {hasGps ? (
-        <LocationMap latitude={data.latitude!} longitude={data.longitude!} />
-      ) : null}
+      <LocationSection latitude={data.latitude} longitude={data.longitude} />
     </div>
   );
 }
