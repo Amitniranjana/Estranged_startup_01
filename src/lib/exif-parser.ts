@@ -66,33 +66,127 @@ function extractDimensions(tags: ExpandedTags): {
   return { width, height };
 }
 
-function extractGps(tags: ExpandedTags): {
+interface GpsTagLike {
+  description?: string;
+  computed?: [number | null, number | null, number | null];
+}
+
+function applyGpsRef(decimal: number, ref: string | undefined): number {
+  if (ref === "S" || ref === "W") return decimal * -1;
+  return decimal;
+}
+
+function dmsPartsToDecimal(
+  parts: [number | null, number | null, number | null],
+  ref: string | undefined
+): number | null {
+  const [degrees, minutes, seconds] = parts;
+  if (degrees === null || minutes === null || seconds === null) return null;
+
+  const decimal = degrees + minutes / 60 + seconds / 3600;
+  return applyGpsRef(decimal, ref);
+}
+
+function parseCoordinateFromTag(
+  tag: GpsTagLike | undefined,
+  ref: string | undefined
+): number | null {
+  if (!tag) return null;
+
+  const fromDescription = Number.parseFloat(tag.description ?? "");
+  if (Number.isFinite(fromDescription)) {
+    return applyGpsRef(fromDescription, ref);
+  }
+
+  if (tag.computed) {
+    return dmsPartsToDecimal(tag.computed, ref);
+  }
+
+  return null;
+}
+
+function extractGpsFromExpanded(tags: ExpandedTags): {
   latitude: number | null;
   longitude: number | null;
 } {
-  const latitude = tags.gps?.Latitude ?? null;
-  const longitude = tags.gps?.Longitude ?? null;
+  const expandedLat = tags.gps?.Latitude;
+  const expandedLon = tags.gps?.Longitude;
 
   if (
-    typeof latitude === "number" &&
-    typeof longitude === "number" &&
-    Number.isFinite(latitude) &&
-    Number.isFinite(longitude)
+    typeof expandedLat === "number" &&
+    typeof expandedLon === "number" &&
+    Number.isFinite(expandedLat) &&
+    Number.isFinite(expandedLon)
   ) {
-    return { latitude, longitude };
+    return { latitude: expandedLat, longitude: expandedLon };
   }
 
-  return { latitude: null, longitude: null };
+  const latRef = tags.exif?.GPSLatitudeRef?.description;
+  const lonRef = tags.exif?.GPSLongitudeRef?.description;
+
+  const latitude = parseCoordinateFromTag(
+    tags.exif?.GPSLatitude as GpsTagLike | undefined,
+    latRef
+  );
+  const longitude = parseCoordinateFromTag(
+    tags.exif?.GPSLongitude as GpsTagLike | undefined,
+    lonRef
+  );
+
+  return { latitude, longitude };
 }
 
-function hasMeaningfulExif(tags: ExpandedTags): boolean {
+function extractGpsFromFlatTags(buffer: ArrayBuffer): {
+  latitude: number | null;
+  longitude: number | null;
+} {
+  try {
+    const tags = ExifReader.load(buffer);
+    const latRef = tags.GPSLatitudeRef?.description;
+    const lonRef = tags.GPSLongitudeRef?.description;
+
+    const latitude = parseCoordinateFromTag(
+      tags.GPSLatitude as GpsTagLike | undefined,
+      latRef
+    );
+    const longitude = parseCoordinateFromTag(
+      tags.GPSLongitude as GpsTagLike | undefined,
+      lonRef
+    );
+
+    return { latitude, longitude };
+  } catch {
+    return { latitude: null, longitude: null };
+  }
+}
+
+function extractGps(
+  tags: ExpandedTags,
+  buffer: ArrayBuffer
+): {
+  latitude: number | null;
+  longitude: number | null;
+} {
+  const fromExpanded = extractGpsFromExpanded(tags);
+
+  if (fromExpanded.latitude !== null && fromExpanded.longitude !== null) {
+    return fromExpanded;
+  }
+
+  return extractGpsFromFlatTags(buffer);
+}
+
+function hasMeaningfulExif(
+  tags: ExpandedTags,
+  latitude: number | null,
+  longitude: number | null
+): boolean {
   return Boolean(
-    tags.exif &&
-      Object.keys(tags.exif).length > 0 &&
-      (getExifDescription(tags, "Make") ||
-        getExifDescription(tags, "Model") ||
-        extractDateTime(tags) ||
-        tags.gps?.Latitude !== undefined)
+    getExifDescription(tags, "Make") ||
+      getExifDescription(tags, "Model") ||
+      extractDateTime(tags) ||
+      (latitude !== null && longitude !== null) ||
+      (tags.exif && Object.keys(tags.exif).length > 0)
   );
 }
 
@@ -151,7 +245,7 @@ export async function parseExifFromFile(file: File): Promise<ParsedExifData> {
   try {
     const tags = ExifReader.load(buffer, { expanded: true });
     const exifDimensions = extractDimensions(tags);
-    const { latitude, longitude } = extractGps(tags);
+    const { latitude, longitude } = extractGps(tags, buffer);
 
     return {
       make: getExifDescription(tags, "Make"),
@@ -161,7 +255,7 @@ export async function parseExifFromFile(file: File): Promise<ParsedExifData> {
       height: exifDimensions.height ?? dimensions.height,
       latitude,
       longitude,
-      hasExif: hasMeaningfulExif(tags),
+      hasExif: hasMeaningfulExif(tags, latitude, longitude),
     };
   } catch {
     return {
